@@ -6,7 +6,7 @@ import random
 import string
 
 def install_requirements():
-    required_packages = ['eth-account', 'mnemonic', 'base58', 'ecdsa', 'PyNaCl']
+    required_packages = ['eth-account', 'mnemonic', 'base58', 'ecdsa', 'PyNaCl', 'bip32utils']
     missing_packages = []
     
     for package in required_packages:
@@ -15,6 +15,8 @@ def install_requirements():
                 __import__('eth_account')
             elif package == 'PyNaCl':
                 __import__('nacl')
+            elif package == 'bip32utils':
+                __import__('bip32utils')
             else:
                 __import__(package.replace('-', '_'))
         except ImportError:
@@ -72,6 +74,9 @@ from mnemonic import Mnemonic
 import hashlib
 import base58
 import ecdsa
+import secrets
+from bip32utils import BIP32Key
+import os
 
 Account.enable_unaudited_hdwallet_features()
 
@@ -446,62 +451,82 @@ class WalletGeneratorApp:
             self.custom_directory = str(Path(path).parent)
             self.path_label.config(text=path)
     
-    def _generate_evm_wallet(self, mnemo):
-        mnemonic_phrase = mnemo.generate(strength=128)
-        account = Account.from_mnemonic(mnemonic_phrase)
-        
-        return {
-            'address': account.address,
-            'private_key': account.key.hex(),
-            'mnemonic': mnemonic_phrase
-        }
+    def _generate_mnemonic(self):
+        try:
+            mnemo = Mnemonic("english")
+            return mnemo.generate(strength=128)
+        except Exception as e:
+            raise Exception(f"Mnemonic generation failed: {str(e)}")
     
-    def _generate_solana_wallet(self, mnemo):
+    def _generate_evm_wallet(self):
+        try:
+            private_key = secrets.token_bytes(32)
+            account = Account.from_key(private_key)
+            
+            mnemo = Mnemonic("english")
+            mnemonic_phrase = mnemo.to_mnemonic(private_key)
+            
+            return {
+                'address': account.address,
+                'private_key': account.key.hex(),
+                'mnemonic': mnemonic_phrase
+            }
+        except Exception as e:
+            raise Exception(f"EVM generation error: {str(e)}")
+    
+    def _generate_solana_wallet(self):
         from nacl.signing import SigningKey
-        import nacl.encoding
         
-        mnemonic_phrase = mnemo.generate(strength=128)
-        seed = mnemo.to_seed(mnemonic_phrase)[:32]
-        
-        signing_key = SigningKey(seed)
-        verify_key = signing_key.verify_key
-        
-        public_key = base58.b58encode(bytes(verify_key)).decode('ascii')
-        private_key_bytes = bytes(signing_key) + bytes(verify_key)
-        private_key = base58.b58encode(private_key_bytes).decode('ascii')
-        
-        return {
-            'address': public_key,
-            'private_key': private_key,
-            'mnemonic': mnemonic_phrase
-        }
+        try:
+            private_key = secrets.token_bytes(32)
+            signing_key = SigningKey(private_key)
+            verify_key = signing_key.verify_key
+            
+            public_key = base58.b58encode(bytes(verify_key)).decode('ascii')
+            private_key_bytes = bytes(signing_key) + bytes(verify_key)
+            private_key_str = base58.b58encode(private_key_bytes).decode('ascii')
+            
+            mnemo = Mnemonic("english")
+            mnemonic_phrase = mnemo.to_mnemonic(private_key)
+            
+            return {
+                'address': public_key,
+                'private_key': private_key_str,
+                'mnemonic': mnemonic_phrase
+            }
+        except Exception as e:
+            raise Exception(f"Solana generation error: {str(e)}")
     
-    def _generate_bitcoin_wallet(self, mnemo):
-        mnemonic_phrase = mnemo.generate(strength=128)
-        seed = mnemo.to_seed(mnemonic_phrase)
-        private_key_bytes = seed[:32]
-        
-        sk = ecdsa.SigningKey.from_string(private_key_bytes, curve=ecdsa.SECP256k1)
-        vk = sk.get_verifying_key()
-        
-        public_key = b'\x04' + vk.to_string()
-        sha256_hash = hashlib.sha256(public_key).digest()
-        ripemd160_hash = hashlib.new('ripemd160', sha256_hash).digest()
-        
-        versioned_hash = b'\x00' + ripemd160_hash
-        checksum = hashlib.sha256(hashlib.sha256(versioned_hash).digest()).digest()[:4]
-        address = base58.b58encode(versioned_hash + checksum).decode('ascii')
-        
-        extended_key = b'\x80' + private_key_bytes
-        checksum_wif = hashlib.sha256(hashlib.sha256(extended_key).digest()).digest()[:4]
-        wif_private_key = base58.b58encode(extended_key + checksum_wif).decode('ascii')
-        
-        return {
-            'address': address,
-            'private_key': wif_private_key,
-            'private_key_hex': private_key_bytes.hex(),
-            'mnemonic': mnemonic_phrase
-        }
+    def _generate_bitcoin_wallet(self):
+        try:
+            private_key = secrets.token_bytes(32)
+            
+            sk = ecdsa.SigningKey.from_string(private_key, curve=ecdsa.SECP256k1)
+            vk = sk.get_verifying_key()
+            
+            public_key = b'\x04' + vk.to_string()
+            sha256_hash = hashlib.sha256(public_key).digest()
+            ripemd160_hash = hashlib.new('ripemd160', sha256_hash).digest()
+            
+            versioned_hash = b'\x00' + ripemd160_hash
+            checksum = hashlib.sha256(hashlib.sha256(versioned_hash).digest()).digest()[:4]
+            address = base58.b58encode(versioned_hash + checksum).decode('ascii')
+            
+            extended_key = b'\x80' + private_key
+            checksum_wif = hashlib.sha256(hashlib.sha256(extended_key).digest()).digest()[:4]
+            wif_private_key = base58.b58encode(extended_key + checksum_wif).decode('ascii')
+            
+            mnemo = Mnemonic("english")
+            mnemonic_phrase = mnemo.to_mnemonic(private_key)
+            
+            return {
+                'address': address,
+                'private_key': wif_private_key,
+                'private_key_hex': private_key.hex(),
+                'mnemonic': mnemonic_phrase
+            }
+        except Exception as e:
+            raise Exception(f"Bitcoin generation error: {str(e)}")
         
     def _generate_wallets(self):
         try:
@@ -520,22 +545,22 @@ class WalletGeneratorApp:
         self.root.update()
         
         try:
-            mnemo = Mnemonic("english")
             wallets = []
             
             for i in range(count):
                 try:
                     if wallet_type == "EVM":
-                        wallet = self._generate_evm_wallet(mnemo)
+                        wallet = self._generate_evm_wallet()
                     elif wallet_type == "Solana":
-                        wallet = self._generate_solana_wallet(mnemo)
+                        wallet = self._generate_solana_wallet()
                     elif wallet_type == "Bitcoin":
-                        wallet = self._generate_bitcoin_wallet(mnemo)
+                        wallet = self._generate_bitcoin_wallet()
                     
                     wallets.append(wallet)
                         
                 except Exception as e:
-                    messagebox.showerror("Error", f"Error generating wallet #{i+1}:\n{e}")
+                    error_msg = f"Error generating wallet #{i+1}:\n{str(e)}"
+                    messagebox.showerror("Error", error_msg)
                     break
                 
                 self.progress['value'] = ((i + 1) / count) * 100
