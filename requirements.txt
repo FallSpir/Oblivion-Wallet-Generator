@@ -1,0 +1,5 @@
+eth-account
+mnemonic
+base58
+ecdsa
+PyNaCl
